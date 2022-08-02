@@ -20,7 +20,7 @@ In conclusion, from the tests we learnt that zonal partial outages could cause s
 
 ![Kube-APIServer Performance Test Result](Kube_APIServer_performance_test_results.png)
 
-*Note: for kube-apiserver failover scenarios, when network latency reached two seconds, ETCD cluster failover happened. When the latency was around two seconds, the kube-apiserver became available. However, when the latency was five seconds or ten seconds, the kube-apiserver did not become available until the unhealthy node was cordoned and the unhealthy pod was evicted.*
+*Note: for kube-apiserver failover scenarios, when network latency reached two seconds, ETCD cluster failover happened.*
 
 ## Test Summaries Per Application
 
