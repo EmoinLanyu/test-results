@@ -2,7 +2,7 @@
 
 ## Overall Summary
 
-In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. A forced and controlled Global Failover could mitigate the issues quickly. To be more specific about "control", in addition to cordoning the nodes in the unhealthy zone and evicting the pods in it, some services might need to carry out extra operations before we apply network isolation. This is where a webhook / callback, prepared by corresponding service team, kicks in that we could call before starting our workflow during a Global Failover.
+In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. A forced and controlled Global Failover could mitigate the issues quickly. To be more specific about "control", in addition to cordoning the nodes in the unhealthy zone and evicting the pods in it, some services might need to carry out extra operations before we apply network isolation.
 
 ## Performance Test Result Chart
 
@@ -24,9 +24,9 @@ In conclusion, from the tests we learnt that zonal partial outages could cause s
 
 ## Test Summaries Per Application
 
-### Message Queueing Service Backed by Solace
+### Solace Software Brokers
 
-When there is partial outage, the performance of the Solace Software Brokers (SSB) provided by MQ Service will be severely affected. Though Solace makes sure no message is lost, it is very likely that the durable Queue is full because subscribers are not able to consume the messages. Thus making the publishers fail to send out any new message.
+When there is partial outage, the performance of the Solace Software Brokers (SSB) will be severely affected. Though Solace makes sure no message is lost, it is very likely that the durable Queue is full because subscribers are not able to consume the messages. Thus making the publishers fail to send out any new message.
 
 As observed from our tests with network latency and packet loss, only latency over 2 seconds or packet loss over 60% will trigger automatic failover of the SSB.
 
