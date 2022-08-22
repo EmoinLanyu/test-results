@@ -2,7 +2,7 @@
 
 ## Overall Summary
 
-In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. A forced and controlled Global Failover could mitigate the issues quickly. To be more specific about "control", in addition to cordoning the nodes in the unhealthy zone and evicting the pods in it, some services might need to carry out extra operations before we apply network isolation.
+In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. A well designed cloud native service that leverages Kubernetes features could gracefully handle the outages and fail over when necessary. However, for many services, especially the legacy applications, it is not easy to quickly become "cloud native". For these services, a forced and controlled Global Failover could mitigate the issues quickly. To be more specific about "control", in addition to draining the nodes in the unhealthy zone, some services might need to carry out extra operations before we apply network isolation. This is where a webhook / callback, prepared by corresponding service team, kicks in that we could call before starting our workflow during a Global Failover.
 
 ## Performance Test Result Chart
 
@@ -20,7 +20,7 @@ In conclusion, from the tests we learnt that zonal partial outages could cause s
 
 ![Kube-APIServer Performance Test Result](Kube_APIServer_performance_test_results.png)
 
-*Note: for kube-apiserver failover scenarios, when network latency reached two seconds, ETCD cluster failover happened.*
+*NOTE: for kube-apiserver failover scenarios, when network latency reached two seconds, Etcd cluster failover happened. Test result here comes from a kube-apiserver connected to a Etcd cluster bootstrapped by [Etcd Druid](https://github.com/gardener/etcd-druid). The readiness probe of the Etcd cluster StatefulSet was manually modified otherwise the failover will fail when latency reaches three seconds.*
 
 ## Test Summaries Per Application
 
@@ -48,28 +48,8 @@ As for failover scenarios, with CrunchyData PostgreSQL cluster HA setup, no auto
 
 A controlled forced failover, by cordoning unhealthy nodes, evicting unhealthy pods, and isolating unhealthy zone via network ACL, can mitigate the issue.
 
-### Kube-APIServer with ETCD Cluster
+### Kube-APIServer with Etcd Cluster
 
-#### ETCD
+***NOTE: The detailed result analysis and summary is kept [here](extended_summary_for_etcd_and_kube_apiserver_tests.md) to keep this overall summary clean. Hovever, it is recommended that readers check it out for better understanding of below statements.***
 
-For ETCD cluster, when partial outage happens in the zone where the ETCD leader is, the performance of the whole service will be affected. When partial outage happens in the zone where the ETCD follower is, only the user (e.g., kube-apiserver) that connects to this unhealthy follower will be affected (the write operations to the ETCD follower will be forwarded to the ETCD leader). With default configurations, disk IO latency as well as network latency greater than one second will cause ETCD cluster to fail over.
-
-In general there are two ways to connect to an ETCD cluster. The impact on the performance of the applications that use ETCD is different for each method.
-
-- Connect via ClusterIP
-  
-  In default mode, kube-proxy maintains the iptable on the node. All the ETCD instance destinations are maintained in the iptable chain. So when an application tries to establish a new TCP connection to the ETCD cluster, one of the instance will be chosen (randomly or in a round-robin way), including the unhealthy one. For those that connect to the unhealthy instance, the performance downgrade will persist until they switch to connect to another instance.
-
-- Connect via Pod fully qualified domain name endpoints
-
-  Application that connects to ETCD cluster via Pod's FQDN endpoints will establish a TCP connection for each endpoint. And depending on which load balancer it is using, the impact would be slightly different. For example, if there are three ETCD instances one of whom is unhealthy, and the application uses round-robin load balancer, one third of the requests will be sent to the unhealthy instance
-
-#### Kube-APIServer
-
-The connection established between kube-apiserver and ETCD is kept-alive. By default, every thirty seconds a heartbeat will be sent. Timeout for the heartbeat is by default ten seconds. If the heartbeat server does not reply in ten seconds, the TCP connection will be dropped and a new one will be established.
-
-Usually, we will configure liveness probe and readiness probe for the kube-apiserver. By default, if the kube-apiserver could not get a response from the ETCD cluster in two seconds, a health check would fail. After several consequential unsuccessful health check, the Pod will be restarted. However, the restarted Pod could still connect to the unhealthy ETCD instance. Even worse, since kube-apiserver establishes one TCP connection to ETCD cluster for each of its API resources, there might be over a hundred connections, a lot of them could be established with the unhealthy instance. Moreover, the health check service uses different connection from the API resources, which means the health check might pass when the issue still affect the performance of the kube-apiserver as a whole.
-
-#### Summary
-
-All in all, for kube-apiserver with ETCD cluster, it is possible for the HA setup to survive a partial zonal outage without human interventions. However, as shown by our tests, when the outage was not severe enough (in our tests with network latencies, even 5-second latency could not trigger auto-heal of kube-apiserver because the 10-second keep-alive timeout was not reached), the performance was still greatly influenced. In this case, Global Failover may still be useful. If we isolate the unhealthy ETCD instance, the kube-apiserver will no longer establish connection to it, and all the ETCD clients will be talking to the healthy servers, thus mitigating the performance issue.
+Well designed cloud native applications such as Etcd and kube-apiserver are able to gracefully handle outages and fail over when necessary. In addition, by correctly using the liveness probe and readiness probe that K8s provides, we can automatically trigger failovers of applications and remove the unhealthy instances from the service.
