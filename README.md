@@ -54,9 +54,11 @@ A controlled forced failover, by cordoning unhealthy nodes, evicting unhealthy p
 
 ***NOTE: The detailed result analysis and summary is kept [here](extended_summary_for_etcd_and_kube_apiserver_tests.md) to keep this overall summary clean. Hovever, it is recommended that readers check it out for better understanding of below statements.***
 
-Well designed cloud native applications such as Etcd and kube-apiserver are able to gracefully handle some outages and fail over when necessary. In addition, by correctly using the liveness probe and readiness probe that K8s provides, we can automatically trigger failovers of applications and remove the unhealthy instances from the service.
+Well designed cloud native applications such as Etcd and kube-apiserver are able to gracefully handle some outages and fail over when necessary.
+
+In addition, by correctly using the liveness probe and readiness probe that K8s provides, we can automatically trigger failovers of applications and remove the unhealthy instances from the service.
 
 That being said, liveness probe and readiness probe still have their limitations.
 
-- Readiness probe: assuming there is a multi-instance service with an unhealthy instance, when the outage is not stable and readiness probe occasionally succeeds for the unhealthy instance, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down (marked as "not ready"). In addition, readiness probe does not take unhealthy endpoints off from headless services.
-- Liveness probe: assuming there an application is using a serivce with an unhealthy instance, if the application creates multiple TCP connections to the service and the health check service of the application's liveness probe happens to use a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed).
+- Readiness probe: assuming there is a multi-instance service with an unhealthy instance, when the outage occurs and readiness probe occasionally succeeds for the unhealthy instance, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down (marked as "not ready"). In addition, readiness probe does not take unhealthy endpoints off from headless services.
+- Liveness probe: assuming there is an application that is consuming a serivce with an unhealthy instance, if the application creates multiple TCP connections to the service while the health check service of the application's liveness probe happens to use a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed).
