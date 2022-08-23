@@ -101,6 +101,9 @@ A well designed cloud native application is able to gracefully handle some outag
 
 In addition, by correctly using the liveness probe and readiness probe that K8s provides, application developers can automatically trigger failovers and remove the unhealthy instances from the service.
 
-On the other hand, liveness probe and readiness probe still have their limitations. For example, when the outage is not stable and readiness probe occasionally succeeds, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down. And as for liveness probe, if the application creates multiple TCP connections to the service that has an unhealthy instance, and the health check happens to be on a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed). In addition, readiness probe does not take unhealthy endpoints off from headless services.
+That being said, liveness probe and readiness probe still have their limitations.
+
+- Readiness probe: assuming there is a multi-instance service with an unhealthy instance, when the outage is not stable and readiness probe occasionally succeeds for the unhealthy instance, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down (marked as "not ready"). In addition, readiness probe does not take unhealthy endpoints off from headless services.
+- Liveness probe: assuming there an application is using a serivce with an unhealthy instance, if the application creates multiple TCP connections to the service and the health check service of the application's liveness probe happens to use a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed).
 
 And if we see from another aspect, application developers should also review their products that whether they are capable of an automatic failover and whether they have leveraged these features K8s provided.
