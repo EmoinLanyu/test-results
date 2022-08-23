@@ -2,7 +2,9 @@
 
 ## Overall Summary
 
-In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. A well designed cloud native service that leverages Kubernetes features could gracefully handle the outages and fail over when necessary. However, for many services, especially the legacy applications, it is not easy to quickly become "cloud native". For these services, a forced and controlled Global Failover could mitigate the issues quickly. To be more specific about "control", in addition to draining the nodes in the unhealthy zone, some services might need to carry out extra operations before we apply network isolation. This is where a webhook / callback, prepared by corresponding service team, kicks in that we could call before starting our workflow during a Global Failover.
+In conclusion, from the tests we learnt that zonal partial outages could cause severe performance issues to some services. Though a well designed cloud native service that leverages Kubernetes features could gracefully handle some outages and fail over when necessary, it is still difficult for them to solve the problems in certain scenarios (e.g. when intermittent failures happen). Moreover, for many services, especially the legacy applications, it is not easy to quickly become "cloud native", and they can not handle zonal partial outages well by themselves. For these services, a forced and controlled[1] Global Failover could mitigate the issues quickly.
+
+*[1] To be more specific about "control", in addition to draining the nodes in the unhealthy zone, some services might need to carry out extra operations before we apply network isolation. This is where a webhook / callback, prepared by corresponding service team, kicks in that we could call before starting our workflow during a Global Failover.*
 
 ## Performance Test Result Chart
 
@@ -52,4 +54,6 @@ A controlled forced failover, by cordoning unhealthy nodes, evicting unhealthy p
 
 ***NOTE: The detailed result analysis and summary is kept [here](extended_summary_for_etcd_and_kube_apiserver_tests.md) to keep this overall summary clean. Hovever, it is recommended that readers check it out for better understanding of below statements.***
 
-Well designed cloud native applications such as Etcd and kube-apiserver are able to gracefully handle outages and fail over when necessary. In addition, by correctly using the liveness probe and readiness probe that K8s provides, we can automatically trigger failovers of applications and remove the unhealthy instances from the service.
+Well designed cloud native applications such as Etcd and kube-apiserver are able to gracefully handle some outages and fail over when necessary. In addition, by correctly using the liveness probe and readiness probe that K8s provides, we can automatically trigger failovers of applications and remove the unhealthy instances from the service.
+
+That being said, liveness probe and readiness probe still have their limitations. For example, when the outage is not stable and readiness probe occasionally succeeds, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down. And as for liveness probe, if the application creates multiple TCP connections to the service that has an unhealthy instance, and the health check happens to be on a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed). In addition, readiness probe does not take unhealthy endpoints off from headless services.

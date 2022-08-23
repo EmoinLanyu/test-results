@@ -7,7 +7,9 @@
   - [Test Setup](#test-setup)
   - [Test Results](#test-results)
     - [Our Test Results](#our-test-results)
-    - [Our Enhancement to Etcd's Readiness Probe](#our-enhancement-to-etcds-readiness-probe)
+      - [With Network Latency](#with-network-latency)
+        - [Our Enhancement to Etcd's Readiness Probe](#our-enhancement-to-etcds-readiness-probe)
+      - [With Disk IO Latency](#with-disk-io-latency)
   - [Test Summary](#test-summary)
     - [Etcd Failover](#etcd-failover)
     - [Kube-APIServer Failover](#kube-apiserver-failover)
@@ -23,7 +25,9 @@ We configured readiness probe and liveness probe for the kube-apiserver. Readine
 
 ### Our Test Results
 
-In our tests with above setup, we observed performance downgrade when disk IO latency or network latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. When the latency was between one second and two seconds, we could see the performance of kube-apiserver went back to normal after Etcd cluster failed over.
+#### With Network Latency
+
+In our tests with above setup, we observed performance downgrade when network latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. When the latency was between one second and two seconds, we could see the performance of kube-apiserver went back to normal after Etcd cluster failed over.
 
 However, with default Etcd cluster configuration, when latency reached two seconds, though we could see that Etcd cluster had successfully failed over, the kube-apiserver was still unavailable.
 
@@ -39,7 +43,7 @@ There could be a circut breaker for Etcd server's health check, so that when lat
 
 This has caused the readiness probe to always succeed when latency was high, thus causing the unhealthy instance's addresses to stay in the Etcd Endpoint. Because of this, kube-proxy still maintains the unhealthy destination in the iptables, so when applications use ClusterIP to connect to the Etcd cluster, their connections could still be established with the unhealthy instance and their performance are affected.
 
-### Our Enhancement to Etcd's Readiness Probe
+##### Our Enhancement to Etcd's Readiness Probe
 
 We manually modified the readiness probe of the Etcd container. Instead of directly checking the exit code of `curl http://<etcd-name>-local:2379/health`, we did something like:
 
@@ -48,6 +52,12 @@ bash -c 'check=$(curl -s http://<etcd-name>-local:2379/health) | grep "true" && 
 ```
 
 This successfully solved the issue and the readiness probe stayed failed when latency reached two seconds. Therefore the unhealthy Etcd instance's addresses were successfully removed from the Endpoint, and restarted kube-apiserver were no longer suffering from the performance issue.
+
+#### With Disk IO Latency
+
+In our tests with above setup, we observed performance downgrade when disk IO latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. With readiness probe in place, unhealthy endpoints will be removed from the Endpoint when consequential health checks fail.
+
+We configured our disk IO chaos testing to have a certain percentage of IO operations to be affected by the latency. So during the tests, it was possible that some health check succeeded. With `successThreshold` of the readiness probe set to one, we observed that the unhealthy endpoints were periodically removed from and added back to the Endpoint. In this case, the kube-apiserver that is using the Etcd cluster was still affected by the outage (unless the latency was high enough to cause the TCP connections with the unhealthy instance to timeout).
 
 ## Test Summary
 
@@ -87,6 +97,10 @@ Let's assume that the connection for the health check service is established wit
 
 ### Conclusions
 
-A well designed cloud native application is able to gracefully handle outages and fail over when necessary. In addition, by correctly using the liveness probe and readiness probe that K8s provides, application developers can automatically trigger failovers and remove the unhealthy instances from the service.
+A well designed cloud native application is able to gracefully handle some outages and fail over when necessary.
+
+In addition, by correctly using the liveness probe and readiness probe that K8s provides, application developers can automatically trigger failovers and remove the unhealthy instances from the service.
+
+On the other hand, liveness probe and readiness probe still have their limitations. For example, when the outage is not stable and readiness probe occasionally succeeds, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down. And as for liveness probe, if the application creates multiple TCP connections to the service that has an unhealthy instance, and the health check happens to be on a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed). In addition, readiness probe does not take unhealthy endpoints off from headless services.
 
 And if we see from another aspect, application developers should also review their products that whether they are capable of an automatic failover and whether they have leveraged these features K8s provided.
