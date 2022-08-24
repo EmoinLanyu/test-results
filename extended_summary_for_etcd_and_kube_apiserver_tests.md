@@ -85,15 +85,27 @@ Usually, we will configure liveness probe and readiness probe for the kube-apise
 
 Kube-APIServer establishes one TCP connection to Etcd cluster per API resource (which means there might be over a hundred connections). When an Etcd instance becomes unhealthy, a lot of the connections could be affected. Moreover, kube-apiserver's health check service uses different connection from its API resources, which means the health check might pass when the issue affects the performance of the kube-apiserver as a whole.
 
-Let's assume that the connection for the health check service is established with the unhealthy Etcd instance. And that:
+1. Let's assume that the connection for the health check service is established with the unhealthy Etcd instance. And that:
 
-- Etcd cluster has well designed readiness probe.
+   - Etcd cluster has properly configured[1] readiness probe.
 
-  If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. So when connections are re-established, no connection will be created between the kube-apiserver and the unhealthy Etcd instance anymore. Therefore, the performance of the kube-apiserver is no longer affected.
+     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. So when connections are re-established, no connection will be created between the kube-apiserver and the unhealthy Etcd instance anymore. Therefore, the performance of the kube-apiserver is no longer affected.
 
-- Etcd cluster does not have good readiness check.
+   - Etcd cluster does not have properly configured readiness probe.
 
-  If the readiness probe is not well written, the unhealthy instance may still end up in the Endpoint's addresses. The restarted Pod could still connect to the unhealthy Etcd instance. 
+     If the readiness probe is not properly configured, the unhealthy instance may still end up in the Endpoint's addresses (or periodically removed from and added back to the Endpoint). The restarted Pod could still connect to the unhealthy Etcd instance.
+
+1. Let's assume that the connection for the health check service is established with a healthy Etcd instance. And that:
+  
+   - Etcd cluster has properly configured readiness probe.
+
+     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. Kube-Proxy then removes the related rules from the iptables. All current TCP connections to the unhealthy instance will eventually time out and be re-established with healthy instances. After re-connections are done, the performance of the kube-apiserver will recover.
+
+   - Etcd cluster does not have properly configured readiness probe.
+
+     If the readiness probe is not properly configured, the unhealthy instance may still end up in the Endpoint's addresses (or periodically removed from and added back to the Endpoint). The kept-alive TCP connections to the unhealthy instance may continue to exist and cause performance issues to the kube-apiserver. Even if some of them time out, they may still be re-established with the unhealthy instance.
+
+*[1] Properly configured here indicates that a readiness probe is able to quickly identify when an instance is available. And that its `successThreshold`, `failureThreshold`, etc., are properly configured so that the instance is not occasionally marked as ready because the probe succeeds from time to time during an outage (like what happened during out tests with disk IO latency).*
 
 ### Conclusions
 
@@ -103,7 +115,6 @@ In addition, by correctly using the liveness probe and readiness probe that K8s 
 
 That being said, liveness probe and readiness probe still have their limitations.
 
-- Readiness probe: assuming there is a multi-instance service with an unhealthy instance, when the outage occurs and readiness probe occasionally succeeds for the unhealthy instance, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down (marked as "not ready"). In addition, readiness probe does not take unhealthy endpoints off from headless services.
-- Liveness probe: assuming there is an application that is consuming a serivce with an unhealthy instance, if the application creates multiple TCP connections to the service while the health check service of the application's liveness probe happens to use a healthy one, the application as a whole is not able to quickly recover from the outage (especially when the outage is not severe enough for every unhealthy connection to be closed).
+- Readiness probe: assuming there is a multi-instance service with an unhealthy instance, when the outage occurs and readiness probe occasionally succeeds for the unhealthy instance, the problem could be tricky to mitigate because a proper `successThreshold` is needed to keep the unhealthy instance down (marked as "not ready"). In addition, readiness probe (as well as liveness probe) does not take unhealthy endpoints off from headless services.
 
 And if we see from another perspective, application developers should also review their products that whether they are capable of an automatic failover and whether they have leveraged these features K8s provided.
