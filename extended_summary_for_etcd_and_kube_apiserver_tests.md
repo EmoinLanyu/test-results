@@ -27,21 +27,20 @@ We configured readiness probe and liveness probe for the kube-apiserver. Readine
 
 #### With Network Latency
 
-In our tests with above setup, we observed performance downgrade when network latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. When the latency was between one second and two seconds, we could see the performance of kube-apiserver went back to normal after Etcd cluster failed over.
+In our tests with above setup, we observed performance downgrade when network latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. When the latency was between one second and two seconds, we could see the Etcd cluster failed over. And when the kube-apiserver was restarted, the performance issue was resolved.
 
-However, with default Etcd cluster configuration, when latency reached two seconds, though we could see that Etcd cluster had successfully failed over, the kube-apiserver was still unavailable.
+However, when the kube-apiserver was not restarted, the performance issue could still persist depending on how bad the outage was. In addition, with default Etcd cluster configuration, when latency reached two seconds, though we could see that Etcd cluster had successfully failed over, the kube-apiserver was still unavailable even if it had restarted.
 
 We looked closer at the problem and found that:
 
-- Etcd server's health check need to check the current leader of its cluster. And the health check has by default one second timeout. So when network latency happens and reaches one second, the health check is likely to fail.
+- Etcd server's health check need to check the current leader of its cluster. And the health check has by default one second timeout. So when network latency happens and reaches one second, Etcd instance's health check is likely to fail.
 - Kubelet is constantly running readiness probes against the unhealthy Etcd Pod.
-
   - When latency was below two seconds and over one second, the probe command `curl http://<etcd-name>-local:2379/health` always returned `{ "health" : "false" }` with non-zero exit code. The check also took around one second to complete.
   - However, when latancy reached two seconds, the command still returned `{ "health" : "false" }` but with exit code zero. Moreover, the check then was finished instantly.
   
-There could be a circut breaker for Etcd server's health check, so that when latency was too much the result was returned immediately. This itself is not a problem, however, since the Etcd cluster bootstrapped by Etcd Druid is using the command execution probe, it only checks the exit code of that specific command. In this case, the exit code was always zero when latency was high.
+There could be a circut breaker for Etcd server's health check, so that when network latency is too much, the result is returned immediately. This mechanism itself is not a problem, however, since the Etcd cluster bootstrapped by Etcd Druid is using the command execution probe, it only checks the exit code of that specific command. In this case, the exit code was always zero when latency was high.
 
-This has caused the readiness probe to always succeed when latency was high, thus causing the unhealthy instance's addresses to stay in the Etcd Endpoint. Because of this, kube-proxy still maintains the unhealthy destination in the iptables, so when applications use ClusterIP to connect to the Etcd cluster, their connections could still be established with the unhealthy instance and their performance are affected.
+This has caused the readiness probe to always succeed when latency is high, thus causing the unhealthy instance's addresses to stay in the Etcd Endpoint. Because of this, kube-proxy still maintains the unhealthy destination in the iptable rules, so when applications use ClusterIP to connect to the Etcd cluster, their connections could still be established with the unhealthy instance and their performance are still affected.
 
 ##### Our Enhancement to Etcd's Readiness Probe
 
@@ -51,27 +50,27 @@ We manually modified the readiness probe of the Etcd container. Instead of direc
 bash -c 'check=$(curl -s http://<etcd-name>-local:2379/health) | grep "true" && if [[ "$check" == "" ]]; then return 1; else return 0; fi'
 ```
 
-This successfully solved the issue and the readiness probe stayed failed when latency reached two seconds. Therefore the unhealthy Etcd instance's addresses were successfully removed from the Endpoint, and restarted kube-apiserver were no longer suffering from the performance issue.
+This successfully solved the issue, and the readiness probe failed when latency reached two seconds. Therefore the unhealthy Etcd instance's addresses were successfully removed from the Endpoint, and restarted kube-apiserver were no longer suffering from the performance issue.
 
 #### With Disk IO Latency
 
-In our tests with above setup, we observed performance downgrade when disk IO latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. With readiness probe in place, unhealthy endpoints will be removed from the Endpoint when consequential health checks fail.
+In our tests with above setup, we observed performance downgrade when disk IO latency was injected. When the latency reached and went over one second, Etcd failovers were more likely to happen. With readiness probe in place, unhealthy endpoints will be removed from the Endpoint when several health checks fail in a row.
 
-We configured our disk IO chaos testing to have a certain percentage of IO operations to be affected by the latency. So during the tests, it was possible that some health check succeeded. With `successThreshold` of the readiness probe set to one, we observed that the unhealthy endpoints were periodically removed from and added back to the Endpoint. In this case, the kube-apiserver that is using the Etcd cluster was still affected by the outage (unless the latency was high enough to cause the TCP connections with the unhealthy instance to timeout).
+We configured our disk IO chaos testing to have a certain percentage of IO operations to be affected by the latency. So during the tests, it was possible that some health check succeeded. With `successThreshold` of the readiness probe set to one, we observed that the unhealthy endpoints were periodically removed from and added back to the Endpoint. In this case, the kube-apiserver that is using the Etcd cluster was still affected by the outage.
 
 ## Test Summary
 
 ### Etcd Failover
 
-For Etcd cluster, when partial outage happens in the zone where the Etcd leader is, the performance of the whole service will be affected. When partial outage happens in the zone where the Etcd follower is, only the user (e.g., kube-apiserver) that connects to this unhealthy follower will be affected (the write operations to the Etcd follower will be forwarded to the Etcd leader). With default configurations, disk IO latency as well as network latency greater than one second will cause Etcd cluster to fail over.
+For Etcd cluster, when partial outage happens in the zone where the Etcd leader is, the performance of the whole service will be affected (the write operations to the Etcd follower will be forwarded to the Etcd leader). When partial outage happens in the zone where the Etcd follower is, only the service (e.g., kube-apiserver) that connects to this unhealthy follower will be affected. With default configurations, disk IO latency as well as network latency greater than one second will cause Etcd cluster to fail over.
 
 In general there are two ways to connect to an Etcd cluster. The impact on the performance of the applications that use Etcd is different for each method.
 
 - Connect via ClusterIP
   
-  In default mode, kube-proxy maintains the iptable on the node. All the Etcd instance destinations are maintained in the iptable chain. So when an application tries to establish a new TCP connection to the Etcd cluster, one of the instance will be chosen (randomly or in a round-robin way), including the unhealthy one. For those that connect to the unhealthy instance, the performance downgrade will persist until they switch to connect to another instance.
+  In default mode, kube-proxy maintains the iptable rules on the node. All the Etcd instance destinations are maintained in the iptable chain. So when an application tries to establish a new TCP connection to the Etcd cluster, one of the instance will be chosen (randomly or in a round-robin way), including the unhealthy one. For those that connect to the unhealthy instance, the performance downgrade will persist until they switch to connect to another instance.
 
-  However, if the readiness probe of the Etcd pod is well designed, kubelet can detect when a Etcd instance is unhealthy, and marks the Pod as `NotReady`, thus removing the unhealthy instance addresses from the Etcd Endpoint.
+  However, if the readiness probe of the Etcd pod is well designed, kubelet can detect when an Etcd instance is unhealthy, and marks the Pod as "not ready", thus removing the unhealthy instance endpoints from the Etcd Endpoint.
 
 - Connect via Pod fully qualified domain name endpoints
 
@@ -103,7 +102,7 @@ Kube-APIServer establishes one TCP connection to Etcd cluster per API resource (
   
    - Etcd cluster has properly configured readiness probe.
 
-     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. Kube-Proxy then removes the related rules from the iptables. Since the kube-apiserver's health check succeeds, the container itself will not be restarted, so the current TCP connections to the unhealthy instance are not closed forcefully. Instead, these TCP connections need to time out first to be re-established. As mentioned above, the default TCP connection heartbeat timeout is ten seconds. Moreover, the performance of the kube-apiserver can only recover after the connections are re-established.
+     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. Kube-Proxy then removes the related rules from the iptables. Since the kube-apiserver's health check succeeds, the container itself will not be restarted, so the current TCP connections to the unhealthy instance are not closed forcefully. Instead, these TCP connections need to time out first prior to be re-established. And as mentioned above, the default TCP connection heartbeat timeout is ten seconds. Moreover, the performance of the kube-apiserver can only recover after the connections are re-established with healthy instances.
 
    - Etcd cluster does not have properly configured readiness probe.
 
