@@ -75,7 +75,11 @@ In general there are two ways to connect to an Etcd cluster. The impact on the p
 
 - Connect via Pod fully qualified domain name endpoints
 
-  Application that connects to Etcd cluster via Pod's FQDN endpoints will establish a TCP connection for each endpoint. And depending on which load balancer it is using, the impact would be slightly different. For example, if there are three Etcd instances one of whom is unhealthy, and the application uses round-robin load balancer, one third of the requests will be sent to the unhealthy instance
+  Application that connects to Etcd cluster using Etcd client via Pod's FQDN endpoints will establish a TCP connection for each endpoint. And depending on which load balancer it is using, the impact would be slightly different. For example, if there are three Etcd instances, one of whom is unhealthy, and the application uses round-robin load balancer, one third of the requests will be sent to the unhealthy instance.
+
+  Depending on the version of Etcd client used, the behavior might be different (ref. [here](https://etcd.io/docs/v3.5/learning/design-client/)).
+
+  In case of the kube-apiserver (as of K8s v1.25.0), it is using Etcd clients (v3.5.4) to connect to Etcd clusters with round-robin load balancer.
 
 ### Kube-APIServer Failover
 
@@ -89,17 +93,17 @@ Kube-APIServer establishes one TCP connection to Etcd cluster per API resource (
 
    - Etcd cluster has properly configured[1] readiness probe.
 
-     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. So when connections are re-established, no connection will be created between the kube-apiserver and the unhealthy Etcd instance anymore. Therefore, the performance of the kube-apiserver is no longer affected.
+     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. So when the kube-apiserver's health check failed (health check timeout is two seconds by default), the container will be restarted. After restarting the container, TCP connections are re-established. Since no connection will be created between the kube-apiserver and the unhealthy Etcd instance anymore, the performance of the kube-apiserver is no longer affected.
 
    - Etcd cluster does not have properly configured readiness probe.
 
      If the readiness probe is not properly configured, the unhealthy instance may still end up in the Endpoint's addresses (or periodically removed from and added back to the Endpoint). The restarted Pod could still connect to the unhealthy Etcd instance.
 
-1. Let's assume that the connection for the health check service is established with a healthy Etcd instance. And that:
+2. Let's assume that the connection for the health check service is established with a healthy Etcd instance. And that:
   
    - Etcd cluster has properly configured readiness probe.
 
-     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. Kube-Proxy then removes the related rules from the iptables. All current TCP connections to the unhealthy instance will eventually time out and be re-established with healthy instances. After re-connections are done, the performance of the kube-apiserver will recover.
+     If the Etcd cluster the kube-apiserver connects to (via ClusterIP) is implemented with a well designed readiness probe. Then the unhealthy instance will be automatically removed from the Endpoint. Kube-Proxy then removes the related rules from the iptables. Since the kube-apiserver's health check succeeds, the container itself will not be restarted, so the current TCP connections to the unhealthy instance are not closed forcefully. Instead, these TCP connections need to time out first to be re-established. As mentioned above, the default TCP connection heartbeat timeout is ten seconds. Moreover, the performance of the kube-apiserver can only recover after the connections are re-established.
 
    - Etcd cluster does not have properly configured readiness probe.
 
